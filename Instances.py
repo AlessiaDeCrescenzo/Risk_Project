@@ -82,18 +82,3 @@ def sample_test_instances(num_instances=1, seed=None):
 
     return instances
 
-# Generate 1 test instance
-instances = sample_test_instances(num_instances=1, seed=42)  # Set seed for reproducibility
-
-# Print the generated instance
-print(f"Number of jobs: {instances[0]['num_jobs']}\n")
-
-# Print details of the first instance
-for i in range(0,10):
-    job = instances[0]['jobs'][i]
-    print(f"{i+1}-th Job Details:")
-    for key, value in job.items():
-        print(f"  {key}: {value}")
-    
-with open('instances.json', 'w') as f:
-    json.dump(instances, f)
