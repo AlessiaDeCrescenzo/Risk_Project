@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.optimize import fsolve
 from scipy.stats import rv_discrete
-from scipy.signal import convolve
+from scipy.signal import convolve,fftconvolve
+import matplotlib.pyplot as plt
 
 
 def equations(vars, mu, cv, gamma1):
@@ -36,7 +37,8 @@ def find_discrete_triangular(mu, cv, gamma1, a_guess=10, b_guess=20):
 def discrete_triangular_rv(mean, cv, gamma1, a1_guess= 10, a2_guess= 20):
     """Creates an asymmetric discrete triangular distribution using the correct PMF."""
     a1,m, a2 = find_discrete_triangular(mean, cv, gamma1, a1_guess, a2_guess)
-    values = np.arange(m - a1, m + a2 + 1)  # Support of the distribution
+    a,b= sorted([m - a1, m + a2 + 1])
+    values = np.arange(a,b)  # Support of the distribution
 
     # Compute PMF using the exact formula from the definition
     normalization_factor = (a1 + a2 + 2) / 2
@@ -65,146 +67,225 @@ def pmf_from_rv(rv, max_len=1000):
 def compute_cdf(pmf):
     return np.cumsum(pmf)
 
-def compute_max_lateness_cdf(instance, grid_size=3000):
+def plot_cdf(grid, F, title="CDF of Maximum Lateness"):
+    plt.figure(figsize=(10,6))
+    plt.plot(grid, F, label="Max Lateness CDF", color='blue')
+    plt.xlabel('Lateness t')
+    plt.ylabel('F(t)')
+    plt.title(title)
+    plt.grid(True)
+    plt.legend()
+    plt.xlim([0, 1000])  # Example: zoom into the first 1000 lateness values
+    plt.ylim([0, 1.05])
+    plt.show()
+
+
+def convolve_cdf_with_cdf(F_i, F_j):
+    """
+    Convolve two CDFs:
+    (F_i * F_j)(t) = sum_{s=0}^t F_i(t-s) * (F_j(s) - F_j(s-1))
+    """
+    grid_size = len(F_i)
+    f_j = np.zeros_like(F_j)
+    f_j[0] = F_j[0]
+    f_j[1:] = F_j[1:] - F_j[:-1]
+
+    F_conv = fftconvolve(F_i[::-1], f_j, mode='full')[:grid_size]
+    return F_conv
+
+def compute_max_lateness_cdf(instance, schedule=None, grid_size=3000):
+    """
+    Compute the CDF of the maximum lateness, following a given schedule.
+
+    Args:
+        instance (dict): An instance containing job information.
+        schedule (list or None): List of job indices indicating the processing order.
+                                 If None, jobs are scheduled by their natural order (0,1,2,...).
+        grid_size (int): Time grid size for discretization.
+
+    Returns:
+        grid (np.ndarray): Time points.
+        F_Lmax (np.ndarray): CDF of maximum lateness.
+    """
     jobs = instance["jobs"]
     num_jobs = instance["num_jobs"]
-
     grid = np.arange(grid_size)
     F_Lj_list = []
 
-    # First job starts at time 0, its completion time is its processing time
-    first_job = jobs[0]
-    a1, a2, m = find_discrete_triangular(first_job["mu"], first_job["CV"], first_job["skew"])
-    pt_rv = discrete_triangular_rv(m, a1, a2)
+    # Default schedule if none is provided
+    if schedule is None:
+        schedule = list(range(num_jobs))
+
+    # Initialize: first job starts at 0
+    first_job_idx = schedule[0]
+    first_job = jobs[first_job_idx]
+    pt_rv = discrete_triangular_rv(first_job["mu"], first_job["CV"], first_job["skew"])
     f_ci = pmf_from_rv(pt_rv, grid_size)
     F_Ci = compute_cdf(f_ci)
 
-    for j in range(1, num_jobs):
-        job = jobs[j]
+    # Completion time of the first job is directly its processing time
+    d_j = first_job["due_date"]
+    F_lj = np.ones(grid_size)
+    if d_j < grid_size:
+        F_lj[:grid_size - d_j] = F_Ci[d_j:]
+
+    F_Lj_list.append(F_lj)
+
+    # Process remaining jobs
+    for idx in schedule[1:]:
+        job = jobs[idx]
 
         # Processing time
-        a1, a2, m = find_discrete_triangular(job["mu"], job["CV"], job["skew"])
-        pt_rv = discrete_triangular_rv(m, a1, a2)
+        pt_rv = discrete_triangular_rv(job["mu"], job["CV"], job["skew"])
         f_j = pmf_from_rv(pt_rv, grid_size)
         F_j = compute_cdf(f_j)
 
-        # Release time: uniform distribution
+        # Release time
         r_lo = job["release_mean"] - job["release_halfwidth"]
         r_hi = job["release_mean"] + job["release_halfwidth"]
-        r_vals = np.arange(r_lo, r_hi + 1)
-        r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
         f_rj = np.zeros(grid_size)
-        for val, p in zip(r_vals, r_probs):
-            if 0 <= val < grid_size:
-                f_rj[val] = p
+        if r_hi >= r_lo:
+            r_vals = np.arange(r_lo, r_hi + 1)
+            r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+            for val, p in zip(r_vals, r_probs):
+                if 0 <= val < grid_size:
+                    f_rj[val] = p
         F_rj = compute_cdf(f_rj)
 
-        # Start time: F_s_j = F_c_i * F_rj
-        F_sj = F_Ci[:grid_size] * F_rj[:grid_size]
+        # Start time: maximum between previous completion and release time (lower bound by product)
+        F_sj = F_Ci * F_rj
 
-        # Completion time: F_c_j = F_s_j * f_j
-        F_cj = convolve(F_sj, f_j)[:grid_size]
+        # Completion time
+        F_cj = convolve_cdf_with_cdf(F_sj, F_j)
 
-        # Lateness: F_L_j(t) = F_C_j(t + d_j)
+        # Lateness
         d_j = job["due_date"]
-        shift = d_j
-        F_lj = np.zeros(grid_size)
-        if shift < grid_size:
-            F_lj[:grid_size - shift] = F_cj[shift:]
+        F_lj = np.ones(grid_size)
+        if d_j < grid_size:
+            F_lj[:grid_size - d_j] = F_cj[d_j:]
 
         F_Lj_list.append(F_lj)
 
-    # Maximum lateness CDF
+        # Update F_Ci for the next job
+        F_Ci = F_cj
+
+    # Maximum lateness CDF: product of all lateness CDFs
     F_Lmax = np.ones(grid_size)
     for F_lj in F_Lj_list:
         F_Lmax *= F_lj
 
     return grid, F_Lmax
 
-def compute_lower_bound_max_lateness(instance, scheduled_indices, grid_size=3000):
+
+def compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=3000):
+    """
+    Compute the lower bound of the maximum lateness CDF given a partial schedule.
+    All operations are correctly defined in terms of CDFs.
+
+    Args:
+        instance (dict): An instance containing job information.
+        scheduled_jobs (list): List of job indices already scheduled, in order.
+        grid_size (int): Time grid size for discretization.
+
+    Returns:
+        grid (np.ndarray): Time points.
+        F_Lmax_lower_bound (np.ndarray): Lower bound CDF of maximum lateness.
+    """
     jobs = instance["jobs"]
     num_jobs = instance["num_jobs"]
-    all_indices = set(range(num_jobs))
-    unscheduled_indices = list(all_indices - set(scheduled_indices))
-    
     grid = np.arange(grid_size)
     F_Lj_list = []
-    
-    # ---- Step 1: Compute F_C_S (completion time CDF of scheduled jobs) ----
-    F_Cs = np.zeros(grid_size)
-    F_Cs[0] = 1.0  # identity for convolution
-    
-    for j in scheduled_indices:
-        job = jobs[j]
-        a1, a2, m = find_discrete_triangular(job["mu"], job["CV"], job["skew"])
-        pt_rv = discrete_triangular_rv(m, a1, a2)
+
+    # --- Scheduled jobs first ---
+    if scheduled_jobs:
+        # Initialize F_Ci: CDF of completion time of the last scheduled job
+        first_job_idx = scheduled_jobs[0]
+        first_job = jobs[first_job_idx]
+        pt_rv = discrete_triangular_rv(first_job["mu"], first_job["CV"], first_job["skew"])
+        f_ci = pmf_from_rv(pt_rv, grid_size)
+        F_Ci = compute_cdf(f_ci)
+
+        for idx in scheduled_jobs:
+            job = jobs[idx]
+
+            # Processing time
+            pt_rv = discrete_triangular_rv(job["mu"], job["CV"], job["skew"])
+            f_j = pmf_from_rv(pt_rv, grid_size)
+            F_j = compute_cdf(f_j)
+
+            # Release time
+            r_lo = job["release_mean"] - job["release_halfwidth"]
+            r_hi = job["release_mean"] + job["release_halfwidth"]
+            f_rj = np.zeros(grid_size)
+            if r_hi >= r_lo:  # just to be safe
+                r_vals = np.arange(r_lo, r_hi + 1)
+                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                for val, p in zip(r_vals, r_probs):
+                    if 0 <= val < grid_size:
+                        f_rj[val] = p
+            F_rj = compute_cdf(f_rj)
+
+            # Start time distribution = max(C_i, r_j) -> lower bound as product
+            F_sj = F_Ci * F_rj
+
+            # Completion time distribution
+            F_cj = convolve_cdf_with_cdf(F_sj, F_j)
+
+            # Lateness distribution
+            d_j = job["due_date"]
+            F_lj = np.ones(grid_size)
+            if d_j < grid_size:
+                F_lj[:grid_size - d_j] = F_cj[d_j:]
+
+            F_Lj_list.append(F_lj)
+
+            # Update F_Ci
+            F_Ci = F_cj
+
+    else:
+        # No scheduled jobs: assume zero past completion
+        F_Ci = np.ones(grid_size)
+
+    # --- Unscheduled jobs ---
+    unscheduled_jobs = [i for i in range(num_jobs) if i not in scheduled_jobs]
+
+    for idx in unscheduled_jobs:
+        job = jobs[idx]
+
+        # Processing time
+        pt_rv = discrete_triangular_rv(job["mu"], job["CV"], job["skew"])
         f_j = pmf_from_rv(pt_rv, grid_size)
-        F_Cs = convolve(F_Cs, f_j)[:grid_size]
-    
-    # Save F_Cs as it is used again for unscheduled jobs' lower bounds
-    F_C_S = compute_cdf(F_Cs)
-    
-    # ---- Step 2: Compute F_L_j for scheduled jobs ----
-    for j in scheduled_indices:
-        job = jobs[j]
-        a1, a2, m = find_discrete_triangular(job["mu"], job["CV"], job["skew"])
-        pt_rv = discrete_triangular_rv(m, a1, a2)
-        f_j = pmf_from_rv(pt_rv, grid_size)
-        
+        F_j = compute_cdf(f_j)
+
         # Release time
         r_lo = job["release_mean"] - job["release_halfwidth"]
         r_hi = job["release_mean"] + job["release_halfwidth"]
-        r_vals = np.arange(r_lo, r_hi + 1)
-        r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
         f_rj = np.zeros(grid_size)
-        for val, p in zip(r_vals, r_probs):
-            if 0 <= val < grid_size:
-                f_rj[val] = p
+        if r_hi >= r_lo:
+            r_vals = np.arange(r_lo, r_hi + 1)
+            r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+            for val, p in zip(r_vals, r_probs):
+                if 0 <= val < grid_size:
+                    f_rj[val] = p
         F_rj = compute_cdf(f_rj)
-        
-        # Assume job starts as soon as it can: max(release_time, completion of previous)
-        F_sj = F_C_S * F_rj
-        F_cj = convolve(F_sj, f_j)[:grid_size]
-        
-        # Lateness
+
+        # Start time lower bound = product
+        F_sj_LB = F_Ci * F_rj
+
+        # Completion time lower bound
+        F_cj_LB = convolve_cdf_with_cdf(F_sj_LB, F_j)
+
+        # Lateness distribution
         d_j = job["due_date"]
-        F_lj = np.zeros(grid_size)
+        F_lj_LB = np.ones(grid_size)
         if d_j < grid_size:
-            F_lj[:grid_size - d_j] = F_cj[d_j:]
-        F_Lj_list.append(F_lj)
-    
-    # ---- Step 3: Lower Bound for F_L_j for unscheduled jobs ----
-    for j in unscheduled_indices:
-        job = jobs[j]
-        a1, a2, m = find_discrete_triangular(job["mu"], job["CV"], job["skew"])
-        pt_rv = discrete_triangular_rv(m, a1, a2)
-        f_j = pmf_from_rv(pt_rv, grid_size)
-        
-        # Release time as uniform
-        r_lo = job["release_mean"] - job["release_halfwidth"]
-        r_hi = job["release_mean"] + job["release_halfwidth"]
-        r_vals = np.arange(r_lo, r_hi + 1)
-        r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-        f_rj = np.zeros(grid_size)
-        for val, p in zip(r_vals, r_probs):
-            if 0 <= val < grid_size:
-                f_rj[val] = p
-        F_rj = compute_cdf(f_rj)
-        
-        # Lower bound start time CDF
-        F_sj_lb = F_C_S * F_rj
-        F_cj_lb = convolve(F_sj_lb, f_j)[:grid_size]
-        
-        # Lateness LB
-        d_j = job["due_date"]
-        F_lj_lb = np.zeros(grid_size)
-        if d_j < grid_size:
-            F_lj_lb[:grid_size - d_j] = F_cj_lb[d_j:]
-        F_Lj_list.append(F_lj_lb)
-    
-    # ---- Step 4: Final Lower Bound for Max Lateness ----
-    F_Lmax_LB = np.ones(grid_size)
+            F_lj_LB[:grid_size - d_j] = F_cj_LB[d_j:]
+
+        F_Lj_list.append(F_lj_LB)
+
+    # --- Final step: maximum lateness CDF is the product of individual lateness CDFs ---
+    F_Lmax_lower_bound = np.ones(grid_size)
     for F_lj in F_Lj_list:
-        F_Lmax_LB *= F_lj
-    
-    return grid, F_Lmax_LB
+        F_Lmax_lower_bound *= F_lj
+
+    return grid, F_Lmax_lower_bound

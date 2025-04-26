@@ -38,16 +38,6 @@ plt.tight_layout()
 plt.show()
 
 instance = instances[0]
-scheduled_indices = [0, 1, 2]
-grid, F_Lmax_LB = compute_lower_bound_max_lateness(instance, scheduled_indices)
-
-t_max = 1000
-plt.figure(figsize=(10, 5))
-plt.plot(grid[:t_max], F_Lmax_LB[:t_max], label="Lower Bound CDF of Max Lateness")
-plt.xlabel("Time t")
-plt.ylabel("CDF")
-plt.title("Lower Bound on Maximum Lateness (Partial Schedule)")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.show()
+grid, F_Lmax_LB = compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs=[0,1,2])
+plot_cdf(grid, F_Lmax_LB)
+print("good job girl!!!")
