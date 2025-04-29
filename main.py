@@ -14,7 +14,7 @@ instances = sample_test_instances(num_instances=1, seed=42)  # Set seed for repr
 print(f"Number of jobs: {instances[0]['num_jobs']}\n")
 
 # Print details of the first instance
-for i in range(0,10):
+for i in range(0,2):
     job = instances[0]['jobs'][i]
     print(f"{i+1}-th Job Details:")
     for key, value in job.items():
@@ -23,21 +23,23 @@ for i in range(0,10):
 with open('instances.json', 'w') as f:
     json.dump(instances, f)
 
-grid, F_Lmax = compute_max_lateness_cdf(instances[0])
+instance = instances[0]
 
+grid, F_Lmax = compute_max_lateness_cdf(instance)
+
+grid1, F_Lmax_LB = compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs=[3])
+
+grid2, F_Lmax_UB = compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs=[3])
 # ---- Plotting ----
-t_max = 1000
+t_max = 1200
 plt.figure(figsize=(10, 5))
-plt.plot(grid[:t_max], F_Lmax[:t_max], label="F_Lmax(t)")
+plt.plot(grid[:t_max], F_Lmax[:t_max], label="Lateness")
+plt.plot(grid1[:t_max], F_Lmax_UB[:t_max], label="Upper bound")
+plt.plot(grid2[:t_max], F_Lmax_LB[:t_max], label="Lower bound")
 plt.xlabel("Time t")
 plt.ylabel("CDF")
-plt.title("CDF of Maximum Lateness (t ≤ 1000)")
+plt.title("CDF of upper and lower bounds of Maximum Lateness ")
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
 plt.show()
-
-instance = instances[0]
-grid, F_Lmax_LB = compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs=[0,1,2])
-plot_cdf(grid, F_Lmax_LB)
-print("good job girl!!!")
