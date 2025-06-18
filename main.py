@@ -19,7 +19,7 @@ for i in range(0,2):
         print(f"  {key}: {value}")
 
 
-instance = instances[8]
+instance = instances[12]
 
 grid, F_Lmax = compute_max_lateness_cdf(instance)
 
@@ -40,4 +40,15 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-best_schedule = build_schedule_with_bounds(instance, threshold=0.975)
+mean_time=0
+mean_n=0
+for i in range(32):
+    best_schedule,t,visited_n = build_schedule_with_bounds(instances[i], threshold=0.975)
+    mean_time+=t
+    mean_n+=visited_n
+    
+mean_time=mean_time/32
+mean_n=mean_n/32
+
+print(f"Mean Elapsed Time for instance:{mean_time}")
+print(f"Mean Number of Visited Nodes for instance:{mean_n}")

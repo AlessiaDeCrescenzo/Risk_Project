@@ -532,15 +532,13 @@ def compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
     return grid, F_Lmax_upper_bound
 
 def build_schedule_with_bounds(instance, threshold=0.975):
-    import time
-    from itertools import permutations
-    import numpy as np
 
     num_jobs = instance['num_jobs']
     pending_nodes_by_level = {0: [(0, [], list(range(num_jobs)))]}
     best_schedule = None
     best_ub = float('inf')
-
+    
+    visited_nodes_count = 0
     visited_levels = set()
     best_partial_schedules = {}
     current_level = 0
@@ -566,6 +564,7 @@ def build_schedule_with_bounds(instance, threshold=0.975):
 
         for lb, sched, rem in considered_nodes:
             if len(rem) <= 2:
+                visited_nodes_count += 1
                 best_local_lateness = float('inf')
                 best_local_schedule = None
 
@@ -589,6 +588,7 @@ def build_schedule_with_bounds(instance, threshold=0.975):
 
 
             for job in rem:
+                visited_nodes_count += 1
                 new_sched = sched + [job]
                 new_rem = [j for j in rem if j != job]
 
@@ -645,6 +645,7 @@ def build_schedule_with_bounds(instance, threshold=0.975):
                 while temp_level < current_level and temp_rem:
                     best_local = None
                     for job in temp_rem:
+                        visited_nodes_count += 1
                         new_sched = temp_sched + [job]
                         new_rem = [j for j in temp_rem if j != job]
 
@@ -676,6 +677,7 @@ def build_schedule_with_bounds(instance, threshold=0.975):
 
     elapsed_time = time.time() - start_time
     print("\nBest schedule found:", best_schedule)
+    print(f"Visited nodes:{visited_nodes_count}")
     print(f"Best UB (lateness): {best_ub:.3f}")
     print(f"Elapsed time: {elapsed_time:.2f} seconds")
-    return best_schedule
+    return best_schedule,elapsed_time,visited_nodes_count
