@@ -1,49 +1,57 @@
 import numpy as np
 from scipy.stats import rv_discrete
 from utils import *
+from process_file import *
+from algorithm import build_schedule_with_bounds
 from Instances import *
 import matplotlib.pyplot as plt
-import json
-import time
 
-instances=process_file("test_10_01.txt")
+instances=process_file("test_20_01.txt")
 
-# Print the generated instance
-print(f"Number of jobs: {instances[3]['num_jobs']}\n")
+toy_instance ={
+        "num_jobs": 4,
+        "jobs": [
+            {
+                "a": 63,
+                "c": 108,
+                "b": 118,
+                "rda": 414,
+                "rdb": 514,
+                "dd": 513
+            },
+            {
+                "a": 105,
+                "c": 161,
+                "b": 173,
+                "rda": 780,
+                "rdb": 870,
+                "dd": 827
+            },
+            {
+                "a": 50,
+                "c": 90,
+                "b": 99,
+                "rda": 120,
+                "rdb": 224,
+                "dd": 201
+            },
+            {
+                "a": 105,
+                "c": 160,
+                "b": 171,
+                "rda": 818,
+                "rdb": 938,
+                "dd": 920
+            }
+        ]
+    }
 
-# Print details of the first instance
-for i in range(0,2):
-    job = instances[2]['jobs'][i]
-    print(f"{i+1}-th Job Details:")
-    for key, value in job.items():
-        print(f"  {key}: {value}")
-
-
-instance = instances[12]
-
-grid, F_Lmax = compute_max_lateness_cdf(instance)
-
-grid1, F_Lmax_LB = compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs=[])
-
-grid2, F_Lmax_UB = compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs=[])
-# ---- Plotting ----
-t_max = 3000
-plt.figure(figsize=(10, 5))
-plt.plot(grid[:t_max], F_Lmax[:t_max], label="Lateness")
-plt.plot(grid1[:t_max], F_Lmax_UB[:t_max], label="Upper bound")
-plt.plot(grid2[:t_max], F_Lmax_LB[:t_max], label="Lower bound")
-plt.xlabel("Time t")
-plt.ylabel("CDF")
-plt.title("CDF of upper and lower bounds of Maximum Lateness ")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.show()
+best_schedule,t,visited_n = build_schedule_with_bounds(toy_instance, threshold=0.95,plot=True, save_plots_folder='plots_toy_example')
 
 mean_time=0
 mean_n=0
 for i in range(32):
-    best_schedule,t,visited_n = build_schedule_with_bounds(instances[i], threshold=0.975)
+    best_schedule,t,visited_n = build_schedule_with_bounds(instances[i], threshold=0.95)
     mean_time+=t
     mean_n+=visited_n
     
