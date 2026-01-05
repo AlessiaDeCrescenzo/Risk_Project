@@ -1,9 +1,10 @@
 import numpy as np
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, least_squares
 from scipy.stats import rv_discrete, triang
 
 
 def equations(vars, mu, cv, gamma1):
+    
     a, b = vars
     c = 3 * mu - a - b  # Express c in terms of a and b
     
@@ -22,12 +23,11 @@ def equations(vars, mu, cv, gamma1):
     return [cv_calc - cv, gamma1_calc - gamma1]
 
 def find_discrete_triangular(mu, cv, gamma1, a_guess=10, b_guess=20):
-    solution = fsolve(equations, (a_guess, b_guess), args=(mu, cv, gamma1))
-    a, b = solution
-    c = 3 * mu - a - b
+    res = least_squares(equations, [a_guess, b_guess], args=(mu, cv, gamma1), bounds=(0, np.inf))
+    a, b = res.x
     
-    #Ensure integer values and correct ordering
-    a, b, c = sorted([round(a), round(b), round(c)])
+    c = 3 * mu - a - b
+    a, c, b = sorted([round(a), round(b), round(c)])
     
     return a, c, b
 
@@ -104,7 +104,7 @@ def convolve_cdf_with_pmf(F_i, f_j):
     F_conv = np.cumsum(f_conv)
     return np.clip(F_conv, 0, 1)
 
-def compute_max_lateness_cdf(instance, schedule=None, grid_size=3000):
+def compute_max_lateness_cdf(jobs, schedule=None, machine="first", grid_size=3000):
     """
     Compute the CDF of the maximum lateness, following a given schedule.
 
@@ -118,7 +118,7 @@ def compute_max_lateness_cdf(instance, schedule=None, grid_size=3000):
         grid (np.ndarray): Time points.
         F_Lmax (np.ndarray): CDF of maximum lateness.
     """
-    jobs = instance["jobs"]
+    jobs = jobs
     grid = np.arange(grid_size)
     F_Lj_list = []
 
@@ -134,16 +134,18 @@ def compute_max_lateness_cdf(instance, schedule=None, grid_size=3000):
     F_i = compute_cdf(f_i)
     
     # Release time
-    r_lo = first_job["rda"] 
-    r_hi = first_job["rdb"]
-    f_ri = np.zeros(grid_size)
-    if r_hi >= r_lo:
-        r_vals = np.arange(r_lo, r_hi + 1)
-        r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-        for val, p in zip(r_vals, r_probs):
-            if 0 <= val < grid_size:
-                f_ri[val] = p
-    F_ri = compute_cdf(f_ri)
+    
+    if machine == "first":
+        r_lo = first_job["rda"] 
+        r_hi = first_job["rdb"]
+        f_ri = np.zeros(grid_size)
+        if r_hi >= r_lo:
+            r_vals = np.arange(r_lo, r_hi + 1)
+            r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+            for val, p in zip(r_vals, r_probs):
+                if 0 <= val < grid_size:
+                    f_ri[val] = p
+        F_ri = compute_cdf(f_ri)
 
 
     # Completion time
@@ -167,16 +169,17 @@ def compute_max_lateness_cdf(instance, schedule=None, grid_size=3000):
         F_j = compute_cdf(f_j)
 
         # Release time
-        r_lo = job["rda"] 
-        r_hi = job["rdb"]
-        f_rj = np.zeros(grid_size)
-        if r_hi >= r_lo:
-            r_vals = np.arange(r_lo, r_hi + 1)
-            r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-            for val, p in zip(r_vals, r_probs):
-                if 0 <= val < grid_size:
-                    f_rj[val] = p
-        F_rj = compute_cdf(f_rj)
+        if machine=="first":
+            r_lo = job["rda"] 
+            r_hi = job["rdb"]
+            f_rj = np.zeros(grid_size)
+            if r_hi >= r_lo:
+                r_vals = np.arange(r_lo, r_hi + 1)
+                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                for val, p in zip(r_vals, r_probs):
+                    if 0 <= val < grid_size:
+                        f_rj[val] = p
+            F_rj = compute_cdf(f_rj)
 
         # Start time: maximum between previous completion and release time (lower bound by product)
         F_sj = F_Ci * F_rj
@@ -203,7 +206,7 @@ def compute_max_lateness_cdf(instance, schedule=None, grid_size=3000):
     return grid, F_Lmax
 
 
-def compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=3000):
+def compute_lower_bound_max_lateness_cdf(jobs, scheduled_jobs, machine="first", grid_size=3000):
     """
     Compute the lower bound of the maximum lateness CDF given a partial schedule.
     All operations are correctly defined in terms of CDFs.
@@ -217,8 +220,8 @@ def compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
         grid (np.ndarray): Time points.
         F_Lmax_lower_bound (np.ndarray): Lower bound CDF of maximum lateness.
     """
-    jobs = instance["jobs"]
-    num_jobs = instance["num_jobs"]
+    jobs = jobs
+    num_jobs = len(jobs)
     grid = np.arange(grid_size)
     F_Lj_list = []
 
@@ -232,16 +235,18 @@ def compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
         F_i = compute_cdf(f_i)
         
         # Release time
-        r_lo = first_job["rda"] 
-        r_hi = first_job["rdb"]
-        f_ri = np.zeros(grid_size)
-        if r_hi >= r_lo:
-            r_vals = np.arange(r_lo, r_hi + 1)
-            r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-            for val, p in zip(r_vals, r_probs):
-                if 0 <= val < grid_size:
-                    f_ri[val] = p
-        F_ri = compute_cdf(f_ri)
+        
+        if machine == "first":
+            r_lo = first_job["rda"] 
+            r_hi = first_job["rdb"]
+            f_ri = np.zeros(grid_size)
+            if r_hi >= r_lo:
+                r_vals = np.arange(r_lo, r_hi + 1)
+                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                for val, p in zip(r_vals, r_probs):
+                    if 0 <= val < grid_size:
+                        f_ri[val] = p
+            F_ri = compute_cdf(f_ri)
 
 
         # Completion time
@@ -256,16 +261,18 @@ def compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
             F_j = compute_cdf(f_j)
 
             # Release time
-            r_lo = job["rda"]
-            r_hi = job["rdb"] 
-            f_rj = np.zeros(grid_size)
-            if r_hi >= r_lo:  # just to be safe
-                r_vals = np.arange(r_lo, r_hi + 1)
-                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-                for val, p in zip(r_vals, r_probs):
-                    if 0 <= val < grid_size:
-                        f_rj[val] = p
-            F_rj = compute_cdf(f_rj)
+            
+            if machine == "first":
+                r_lo = job["rda"]
+                r_hi = job["rdb"] 
+                f_rj = np.zeros(grid_size)
+                if r_hi >= r_lo:  # just to be safe
+                    r_vals = np.arange(r_lo, r_hi + 1)
+                    r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                    for val, p in zip(r_vals, r_probs):
+                        if 0 <= val < grid_size:
+                            f_rj[val] = p
+                F_rj = compute_cdf(f_rj)
 
             # Start time distribution = max(C_i, r_j) -> lower bound as product
             F_sj = F_Ci * F_rj
@@ -300,16 +307,18 @@ def compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
         f_j = pmf_from_rv(pt_rv, grid_size)
 
         # Release time
-        r_lo = job["rda"] 
-        r_hi = job["rdb"]
-        f_rj = np.zeros(grid_size)
-        if r_hi >= r_lo:
-            r_vals = np.arange(r_lo, r_hi + 1)
-            r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-            for val, p in zip(r_vals, r_probs):
-                if 0 <= val < grid_size:
-                    f_rj[val] = p
-        F_rj = compute_cdf(f_rj)
+        
+        if machine == "first":
+            r_lo = job["rda"] 
+            r_hi = job["rdb"]
+            f_rj = np.zeros(grid_size)
+            if r_hi >= r_lo:
+                r_vals = np.arange(r_lo, r_hi + 1)
+                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                for val, p in zip(r_vals, r_probs):
+                    if 0 <= val < grid_size:
+                        f_rj[val] = p
+            F_rj = compute_cdf(f_rj)
 
         # Start time lower bound = product
         F_sj_LB = F_Ci * F_rj
@@ -332,7 +341,7 @@ def compute_lower_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
         
     return grid, F_Lmax_lower_bound
 
-def compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=3000):
+def compute_upper_bound_max_lateness_cdf(jobs, scheduled_jobs, machine = "first", grid_size=3000):
     """
     Compute the upper bound of the maximum lateness CDF given a partial schedule.
     All operations are correctly defined in terms of CDFs.
@@ -346,8 +355,8 @@ def compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
         grid (np.ndarray): Time points.
         F_Lmax_lower_bound (np.ndarray): Lower bound CDF of maximum lateness.
     """
-    jobs = instance["jobs"]
-    num_jobs = instance["num_jobs"]
+    jobs = jobs
+    num_jobs = len(jobs)
     grid = np.arange(grid_size)
     F_Lj_list = []
 
@@ -360,16 +369,19 @@ def compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
         f_i = pmf_from_rv(pt_rv, grid_size)
         F_i = compute_cdf(f_i)
         
-        r_lo = first_job["rda"] 
-        r_hi = first_job["rdb"]
-        f_ri = np.zeros(grid_size)
-        if r_hi >= r_lo:
-            r_vals = np.arange(r_lo, r_hi + 1)
-            r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-            for val, p in zip(r_vals, r_probs):
-                if 0 <= val < grid_size:
-                    f_ri[val] = p
-        F_ri = compute_cdf(f_ri)
+        #release dates
+        
+        if machine == "first":
+            r_lo = first_job["rda"] 
+            r_hi = first_job["rdb"]
+            f_ri = np.zeros(grid_size)
+            if r_hi >= r_lo:
+                r_vals = np.arange(r_lo, r_hi + 1)
+                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                for val, p in zip(r_vals, r_probs):
+                    if 0 <= val < grid_size:
+                        f_ri[val] = p
+            F_ri = compute_cdf(f_ri)
 
 
         # Completion time
@@ -384,16 +396,18 @@ def compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
             F_j = compute_cdf(f_j)
 
             # Release time
-            r_lo = job["rda"]
-            r_hi = job["rdb"] 
-            f_rj = np.zeros(grid_size)
-            if r_hi >= r_lo:  # just to be safe
-                r_vals = np.arange(r_lo, r_hi + 1)
-                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-                for val, p in zip(r_vals, r_probs):
-                    if 0 <= val < grid_size:
-                        f_rj[val] = p
-            F_rj = compute_cdf(f_rj)
+            
+            if machine == "first":
+                r_lo = job["rda"]
+                r_hi = job["rdb"] 
+                f_rj = np.zeros(grid_size)
+                if r_hi >= r_lo:  # just to be safe
+                    r_vals = np.arange(r_lo, r_hi + 1)
+                    r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                    for val, p in zip(r_vals, r_probs):
+                        if 0 <= val < grid_size:
+                            f_rj[val] = p
+                F_rj = compute_cdf(f_rj)
 
             # Start time distribution = max(C_i, r_j) -> lower bound as product
             F_sj = F_Ci * F_rj
@@ -421,23 +435,10 @@ def compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
     unscheduled_jobs = [i for i in range(num_jobs) if i not in scheduled_jobs]
     
     job=jobs[unscheduled_jobs[0]]
-    r_lo = job["rda"]
-    r_hi = job["rdb"]
-    f_rj = np.zeros(grid_size)
-    if r_hi >= r_lo:
-        r_vals = np.arange(r_lo, r_hi + 1)
-        r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
-        for val, p in zip(r_vals, r_probs):
-            if 0 <= val < grid_size:
-                f_rj[val] = p
-    F_rmax = compute_cdf(f_rj)
-
-    for idx in unscheduled_jobs[1:]:
-        job = jobs[idx]
-
-        # Processing time of r_max, i.e, the product of the cdf of all release times in unscheduled jobs
+    
+    if machine == "first":
         r_lo = job["rda"]
-        r_hi = job["rdb"] 
+        r_hi = job["rdb"]
         f_rj = np.zeros(grid_size)
         if r_hi >= r_lo:
             r_vals = np.arange(r_lo, r_hi + 1)
@@ -445,8 +446,23 @@ def compute_upper_bound_max_lateness_cdf(instance, scheduled_jobs, grid_size=300
             for val, p in zip(r_vals, r_probs):
                 if 0 <= val < grid_size:
                     f_rj[val] = p
-        F_rj = compute_cdf(f_rj)
-        F_rmax*=F_rj
+        F_rmax = compute_cdf(f_rj)
+
+        for idx in unscheduled_jobs[1:]:
+            job = jobs[idx]
+
+            # Processing time of r_max, i.e, the product of the cdf of all release times in unscheduled jobs
+            r_lo = job["rda"]
+            r_hi = job["rdb"] 
+            f_rj = np.zeros(grid_size)
+            if r_hi >= r_lo:
+                r_vals = np.arange(r_lo, r_hi + 1)
+                r_probs = np.full_like(r_vals, 1 / len(r_vals), dtype=float)
+                for val, p in zip(r_vals, r_probs):
+                    if 0 <= val < grid_size:
+                        f_rj[val] = p
+            F_rj = compute_cdf(f_rj)
+            F_rmax*=F_rj
         
     
     for idx in unscheduled_jobs:

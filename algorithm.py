@@ -9,11 +9,29 @@ import os
 import matplotlib.image as mpimg
 from collections import defaultdict
 
-def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots_folder=None):
+def build_schedule_with_bounds(instance, n_machine=1, threshold=0.975, plot=False, save_plots_folder=None):
 
-    num_jobs = instance['num_jobs']
-    pending_nodes_by_level = {0: [(0, [], list(range(num_jobs)))]}
-    surviving_children_map = {}
+    #numero di job nel job shop (passano tutti per tutte le macchina)
+    num_jobs = instance["num_jobs"]
+    
+    #numero macchine totali
+    n_machines = len(instance) - 1
+    
+    #operazioni da considerare
+    if n_machine==1:
+        jobs = instance["jobs1"]
+    else: jobs = instance[f"jobs{n_machine}"]
+    
+    #TODO: per ogni macchina, devo andare a calcolare i best schedule finali e rimuovere quelli che hanno lb >= ub best al momento 
+    #TODO : poi, vado a estendere il nodo migliore (con schedule completo) sulla macchina successiva e procedo come prima
+    #TODO : salvare i best schedule per ogni macchina! 
+    #TODO : capire come collegare fine prima macchina e inizio seconda
+    
+    #nodi "aperti" per ciascun livello, indicati come (livello, schedule, job rimanenti)
+    surviving_children_map = {0: [(0, [], list(range(num_jobs)))]}
+    
+    #stessa mappa, ma senza i best nodes (altrimenti nasce un loop)
+    #surviving_children_map = {}
     best_schedule = None
     best_ub = float('inf')
 
@@ -31,9 +49,13 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
     node_id = 0
     node_map = {}  # maps (tuple_sched, level) to node id
 
-    while current_level in pending_nodes_by_level and pending_nodes_by_level[current_level]:
-        nodes_at_level = pending_nodes_by_level[current_level]
+    while current_level in surviving_children_map and surviving_children_map[current_level]:
+        nodes_at_level = list(surviving_children_map[current_level])
+        
+        if current_level!=0 and best_node_data is not None: 
+            surviving_children_map[current_level].remove((best_node_data[2], best_node_data[0], best_node_data[3]))
 
+        
         if current_level not in visited_levels and current_level != 0:
             visited_levels.add(current_level)
             considered_nodes = [(best_node_data[2], best_node_data[0], best_node_data[3])]
@@ -64,7 +86,7 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
                 for perm in permutations(rem):
                     visited_nodes_count += 1
                     final_schedule = sched + list(perm)
-                    grid, F = compute_max_lateness_cdf(instance, final_schedule, grid_size=2000)
+                    grid, F = compute_max_lateness_cdf(jobs, final_schedule, grid_size=2000)
                     idx = np.where(F >= threshold)[0]
                     lateness = grid[idx[0]] if len(idx) > 0 else float('inf')
 
@@ -97,6 +119,8 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
                 best_ub = best_local_lateness
                 best_schedule = best_local_schedule
                 ub_updated_level = current_level
+                #best_node_data = (best_schedule, best_local_lateness, best_local_lateness, [])
+                #current_level+=1
                 print(f"New global best UB {best_ub:.3f} with complete schedule {best_schedule}")
                 continue
 
@@ -105,8 +129,8 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
                 new_sched = sched + [job]
                 new_rem = [j for j in rem if j != job]
 
-                grid_lb, F_lb = compute_lower_bound_max_lateness_cdf(instance, new_sched, grid_size=2000)
-                grid_ub, F_ub = compute_upper_bound_max_lateness_cdf(instance, new_sched, grid_size=2000)
+                grid_lb, F_lb = compute_lower_bound_max_lateness_cdf(jobs, new_sched, grid_size=2000)
+                grid_ub, F_ub = compute_upper_bound_max_lateness_cdf(jobs, new_sched, grid_size=2000)
 
                 idx_lb = np.where(F_lb >= threshold)[0]
                 lb_val = grid_lb[idx_lb[0]] if len(idx_lb) > 0 else float('inf')
@@ -159,8 +183,9 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
         if pruned_count > 0:
             print(f"Pruned {pruned_count} children at level {current_level + 1} due to LB >= best_ub")
 
-        pending_nodes_by_level[current_level + 1] = surviving_children.copy()
-        surviving_children_map[current_level + 1] = surviving_children.copy()
+        #pending_nodes_by_level[current_level + 1] = surviving_children.copy()
+        if len(surviving_children)>0:
+            surviving_children_map[current_level + 1] = surviving_children.copy()
 
         if best_node_data and (best_node_data[2], best_node_data[0], best_node_data[3]) in surviving_children_map[current_level + 1]:
             surviving_children_map[current_level + 1].remove((best_node_data[2], best_node_data[0], best_node_data[3]))
@@ -168,7 +193,7 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
         current_level += 1
 
         for lvl in range(ub_updated_level, current_level):
-            if lvl not in surviving_children_map or len(surviving_children_map[lvl]) == 0:
+            if lvl not in surviving_children_map or len(surviving_children_map[lvl]) == 0 or lvl==0:
                 continue
 
             for node in surviving_children_map[lvl]:
@@ -186,6 +211,7 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
                 temp_level = len(temp_sched)
 
                 while temp_level < current_level and temp_rem:
+                    
                     best_local = None
                     
                     parent_key = (tuple(temp_sched), temp_level)
@@ -197,17 +223,68 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
                         node_id += 1
                     else:
                         parent_id = node_map[parent_key]
+                        
+                    if len(temp_rem) <= 2: 
+                        
+                        best_local_lateness = float('inf')
+                        best_local_schedule = None
+
+                        for perm in permutations(temp_rem):
+                            
+                            visited_nodes_count += 1
+                            final_schedule = sched + list(perm)
+                            grid, F = compute_max_lateness_cdf(jobs, final_schedule, grid_size=2000)
+                            idx = np.where(F >= threshold)[0]
+                            lateness = grid[idx[0]] if len(idx) > 0 else float('inf')
+
+                            if lateness < best_local_lateness:
+                                best_local_lateness = lateness
+                                best_local_schedule = final_schedule
+
+                            if plot:
+                                plt.figure()
+                                plt.plot(grid, F,color='blue', label="CDF")
+                                plt.axhline(threshold, color='grey', linestyle='--')
+                                plt.text(0.02, threshold + 0.002, f"alpha = {1 - threshold:.3f}", color='red', fontsize=9, verticalalignment='bottom')   
+                                if len(idx) > 0:
+                                    plt.axvline(lateness, color='blue', linestyle='--', label=f"UB = {lateness:.2f}")
+                                plt.title(f"Schedule {final_schedule} (leaf) with LB = UB = {lateness:.2f}")
+                                plt.xlabel("Max Lateness")
+                                plt.ylabel("CDF")
+                                plt.legend()
+                                if save_plots_folder:
+                                    plt.savefig(os.path.join(save_plots_folder, f"node_{visited_nodes_count}_leaf.png"), dpi=200)
+                                    plt.close()
+                                    
+                            child_key = (tuple(final_schedule), current_level + 1)
+                            if child_key not in node_map:
+                                node_map[child_key] = node_id
+                                G.add_node(node_id, label=str(final_schedule))
+                                G.add_edge(parent_id, node_id,lb=lb_val, ub=ub_val)
+                                node_id += 1
+                                
+                        if best_local_lateness < best_ub: 
+                            
+                            best_ub = best_local_lateness
+                            best_schedule = best_local_schedule
+                            temp_rem=[]
+                            print(f"Back-tracked new global best UB {best_ub:.3f} with complete schedule {best_schedule}")
+                            continue
+                    
+                    if len(temp_rem)<=2: 
+                        temp_level+=1
+                        continue
                     
                     for job in temp_rem:
                         visited_nodes_count += 1
                         new_sched = temp_sched + [job]
                         new_rem = [j for j in temp_rem if j != job]
 
-                        grid_ub, F_ub = compute_upper_bound_max_lateness_cdf(instance, new_sched, grid_size=2000)
+                        grid_ub, F_ub = compute_upper_bound_max_lateness_cdf(jobs, new_sched, grid_size=2000)
                         idx_ub = np.where(F_ub >= threshold)[0]
                         ub_val = grid_ub[idx_ub[0]] if len(idx_ub) > 0 else float('inf')
 
-                        grid_lb, F_lb = compute_lower_bound_max_lateness_cdf(instance, new_sched, grid_size=2000)
+                        grid_lb, F_lb = compute_lower_bound_max_lateness_cdf(jobs, new_sched, grid_size=2000)
                         idx_lb = np.where(F_lb >= threshold)[0]
                         lb_val = grid_lb[idx_lb[0]] if len(idx_lb) > 0 else float('inf')
 
@@ -253,6 +330,9 @@ def build_schedule_with_bounds(instance, threshold=0.975, plot=False, save_plots
                             print(f"Updated best UB {best_ub:.3f} from backtracked path with partial schedule {temp_sched}")
 
                         surviving_children_map[lvl + 1].append((lb_val, temp_sched, temp_rem))
+        
+        if current_level!=0 and best_node_data is not None: 
+            surviving_children_map[current_level].append((best_node_data[2], best_node_data[0], best_node_data[3]))
 
     elapsed_time = time.time() - start_time
     print("\nBest schedule found:", best_schedule)

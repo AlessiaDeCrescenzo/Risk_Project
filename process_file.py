@@ -52,7 +52,7 @@ def process_file(file_path):
 
             instances.append({
                 "num_jobs": num_jobs_per_instance,
-                "jobs": jobs
+                "jobs1": jobs
             })
 
     # Save to a JSON file
