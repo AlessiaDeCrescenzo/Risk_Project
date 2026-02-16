@@ -5,13 +5,13 @@ from Instances import *
 
 
 #instances=sample_test_instances(num_instances=32, seed=1)
-instances=process_file("test_10_01.txt")
+#instances=process_file("test_10_01.txt")
 
-instances_fs=read_file_fs("test_10_01.txt", n_machines=2)
+instances=read_file_fs("test_10_01.txt", n_machines=1)
 
 toy_instance ={
         "num_jobs": 4,
-        "jobs1": [
+        "jobs": [
             {
                 "op":(0,0),
                 "a": 63,

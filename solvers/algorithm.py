@@ -37,7 +37,7 @@ class Branch_Bound():
         """
 
         # operations to be considered
-        jobs = self.instance["jobs1"]
+        jobs = self.instance["jobs"]
 
         # initialize the CdF estimator for the given instance 
         self.cdf = CdF_estimator(jobs)
