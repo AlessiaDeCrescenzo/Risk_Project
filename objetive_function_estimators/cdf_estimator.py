@@ -109,7 +109,8 @@ class CdF_estimator():
 
         return grid, F_Lmax
     
-    def compute_lower_bound_max_lateness_cdf(self, scheduled_jobs, machine="first", grid_size=2500):
+    def compute_lower_bound_max_lateness_cdf(self, scheduled_jobs, n_machines=1, grid_size=2500):
+        
         """
         Compute the lower bound of the maximum lateness CDF given a partial schedule.
         All operations are correctly defined in terms of CDFs.
@@ -151,7 +152,7 @@ class CdF_estimator():
 
                 # Release time
                 
-                if machine == "first":
+                if job['op'][1]==0:
                     r_lo = job["rda"]
                     r_hi = job["rdb"] 
                     f_rj = np.zeros(grid_size)
@@ -192,7 +193,7 @@ class CdF_estimator():
                 
                 # Release time
                 
-                if machine == "first":
+                if first_job['op'][1]==0:
                     r_lo = first_job["rda"] 
                     r_hi = first_job["rdb"]
                     f_ri = np.zeros(grid_size)
@@ -235,7 +236,7 @@ class CdF_estimator():
 
             # Release time
             
-            if machine == "first":
+            if job['op'][1]==0:
                 r_lo = job["rda"] 
                 r_hi = job["rdb"]
                 f_rj = np.zeros(grid_size)

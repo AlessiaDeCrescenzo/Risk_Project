@@ -21,267 +21,119 @@ class Branch_Bound():
         ]  # numero di job nel job shop (passano tutti per tutte le macchina)
 
     def build_schedule_with_bounds(
-        self, n_machines=1, plot=False, save_plots_folder=None
+        self, n_machines=1, plot=False, save_plots_folder=None, gap_tolerance=0.05
     ):
-        
-        """Builds a schedule for the given instance using a branch and bound algorithm with CDF-based bounds, and generates plots if requested.   
-        
-        Args:
-            n_machine (int, optional): the machine to build the schedule for. Defaults to 1.
-            plot (bool, optional): whether to generate plots. Defaults to False.
-            save_plots_folder (str, optional): the folder to save the plots in. Defaults to None.
-            
-        Returns:
-            tuple: (best_schedule, elapsed_time) where best_schedule is the best schedule found for the given machine, and elapsed_time is the time taken to find it.
-            
         """
-
-        # operations to be considered
-        jobs = self.instance["jobs"]
-
-        # initialize the CdF estimator for the given instance 
-        self.cdf = CdF_estimator(jobs)
-
-        # TODO: per ogni macchina, devo andare a calcolare i best schedule finali e rimuovere quelli che hanno lb >= ub best al momento
-        # TODO : poi, vado a estendere il nodo migliore (con schedule completo) sulla macchina successiva e procedo come prima
-        # TODO : salvare i best schedule per ogni macchina!
-        # TODO : capire come collegare fine prima macchina e inizio seconda
-
-        # open nodes for each level, given as level: [(lower_bound, partial_schedule, left_out_job),..]
-        initial_rem = [(i, j) for i in range(self.num_jobs) for j in range(n_machines)]
-        self.surviving_children_map = {0: [(0, [], initial_rem)]}
-
-        # initialize variables to keep track of the best schedule and its upper bound
-        best_schedule = None
-        best_ub = float("inf")
-
-        # store best partial schedules for each level, to be used for backtracking and pruning of non-main branches. 
-        # Given as level: partial_schedule
-        best_partial_schedules = {} 
+        Builds a schedule using Depth-First Branch and Bound (DFS).
+        Mimics the efficient 'diving' strategy of your old code to find a UB quickly.
+        """
         
-        # set current level to 0
-        current_level = 0 
-
+        # 1. Initialization
+        jobs = self.instance["jobs"]
+        self.cdf = CdF_estimator(jobs)
+        
         start_time = time.time()
+        self.visited_nodes_count = 0
 
-        # results folder
         if save_plots_folder and not os.path.exists(save_plots_folder):
             os.makedirs(save_plots_folder)
 
-        # runs until reaching the leaf nodes
-        while current_level < (self.num_jobs - 1):
+        # Initialize Best Upper Bound to Infinity
+        best_ub = float("inf")
+        best_schedule = None
 
-            # if level is not 0 simply consider the best node found up until now, else consider the starting node
-            if current_level != 0 and best_node_data:
-                considered_node = [
-                    best_node_data[2],
-                    best_node_data[0],
-                    best_node_data[3],
-                ]
-            else:
-                considered_node = list(self.surviving_children_map[0][0])
+        # Prepare initial state
+        initial_rem = [(i, j) for i in range(self.num_jobs) for j in range(n_machines)]
+        
+        # STACK: LIFO (Last In, First Out) for Depth-First Search
+        # Format: (Lower_Bound, Schedule, Remaining_Jobs)
+        stack = [(0, [], initial_rem)]
+        
+        print(f"--- Starting Depth-First Search ---")
 
-            # save children nodes and best node
+        while stack:
+            # Pop the latest node (Deepest node) to simulate a "Dive"
+            parent_lb, parent_sched, parent_rem = stack.pop()
+            
+            # PRUNING CHECK
+            # 1. Standard: LB >= UB
+            if parent_lb >= best_ub:
+                continue
+            
+            # 2. Relative Gap: If improvement is too small, prune
+            if best_ub != float("inf"):
+                denom = best_ub if best_ub > 0 else 1.0
+                if (best_ub - parent_lb) / denom < gap_tolerance:
+                    continue
+
+            # --- LEAF OPTIMIZATION (2 Jobs Remaining) ---
+            if len(parent_rem) == 2:
+                
+                if parent_lb >= best_ub:
+                    continue
+                
+                local_lb, local_sched = self.final_node_evaluation(
+                    parent_sched, parent_rem, plot, save_plots_folder
+                )
+                
+                if local_lb < best_ub:
+                    best_ub = local_lb
+                    best_schedule = local_sched
+                    print(f"  > New Best Solution (Leaf): {best_ub:.3f} | Schedule: {best_schedule}")
+                continue
+            
+            # --- BRANCHING ---
             children = []
-            best_node_data = None
-
-            # starting from the previous level's best node
-            lb, sched, rem = considered_node
-
-            # if there are more than 2 jobs remaining
-            if len(rem) > 2:
-
-                # try adding each job to the schedule and compute the new bounds
-                for job in rem:
-                    
-                    
-                    self.visited_nodes_count += 1
-                    new_sched = sched + [job]
-                    new_rem = [j for j in rem if j != job]
-
-                    lb_val, ub_val = self.node_evaluation(
-                        new_sched, plot, save_plots_folder
-                    )
-
-
-                    # save children if lb_val is smaller than the current best ub_val
-                    if best_node_data is None or lb_val < best_node_data[1]:
-                        children.append((lb_val, new_sched, new_rem))
-                    else:
-                        print(
-                            f"Pruned child with LB={lb_val:.3f} >= best UB found until now at level {current_level + 1}"
-                        )
-                        
-                    
-                    # if ub has improved or one hasn't been found yet for the current level, update it
-                    if (best_node_data is None) or (ub_val < best_node_data[1]):
-                        best_node_data = (new_sched, ub_val, lb_val, new_rem)
-                        
-                    
-
-                # if a best node was found, set it as best ub
-                if best_node_data:
-                    best_ub = best_node_data[1]
-                    best_partial_schedules[current_level] = best_node_data[0]
-                    print(
-                        f"Updated best UB {best_ub:.3f} with partial schedule {best_node_data[0]}"
-                    )
-
-                # check if there are children left with lb>=best_ub and prune them
-                surviving_children = [
-                    child for child in children if child[0] <= best_ub
-                ]
-                pruned_count = len(children) - len(surviving_children)
-                if pruned_count > 0:
-                    print(
-                        f"Pruned {pruned_count} children at level {current_level + 1} due to LB >= best_ub"
-                    )
-
-                # if there are any children left, add them to the map
-                if len(surviving_children) > 0:
-                    self.surviving_children_map[current_level + 1] = (
-                        surviving_children.copy()
-                    )
-
-                # remove best_node from the map
-                if (
-                    best_node_data
-                    and (best_node_data[2], best_node_data[0], best_node_data[3])
-                    in self.surviving_children_map[current_level + 1]
-                ):
-                    self.surviving_children_map[current_level + 1].remove(
-                        (best_node_data[2], best_node_data[0], best_node_data[3])
-                    )
-
-                # increase level
-                current_level += 1
-
-            else:  # if there are only two jobs remaining
+            for job in parent_rem:
+                self.visited_nodes_count += 1
                 
-                #find the best complete schedule among the two possible
-                best_local_lateness, best_local_schedule = self.final_node_evaluation(
-                    sched, rem, plot, save_plots_folder
+                new_sched = parent_sched + [job]
+                new_rem = [j for j in parent_rem if j != job]
+
+                lb_val, ub_val = self.node_evaluation(
+                    new_sched, plot, save_plots_folder
                 )
 
-                # update best ub and level
-                best_ub = best_local_lateness
-                best_schedule = best_local_schedule
+                # Update Global Best UB immediately if found
+                if ub_val < best_ub:
+                    best_ub = ub_val
+                    print(f"  > Updated Global UB to {best_ub:.3f} from partial: {new_sched}")
+
+                # Add to potential children only if promising
+                # Check Gap Tolerance for child
+                keep_child = True
+                if best_ub != float("inf"):
+                     if lb_val >= best_ub:
+                         keep_child = False
+                     else:
+                         denom = best_ub if best_ub > 0 else 1.0
+                         if (best_ub - lb_val) / denom < gap_tolerance:
+                             keep_child = False
                 
-                #increase level
-                current_level += 1
-                print(
-                    f"New global best UB {best_ub:.3f} with complete schedule {best_schedule}"
-                )
+                if keep_child:
+                    children.append((lb_val, new_sched, new_rem))
 
-            # backtrack to previous levels
-            for lvl in range(1, current_level):
+            # --- CRITICAL STEP: REVERSE SORT ---
+            # We want to pop the BEST child first. 
+            # Since stack is LIFO, we sort descending (Largest LB first) -> Smallest LB is at the end.
+            # This ensures the best node is popped in the very next iteration.
+            children.sort(key=lambda x: x[0], reverse=True)
+            
+            # Push children to stack
+            stack.extend(children)
 
-                # if lvl is 0 or there are no children left, proceed to next level
-                if (
-                    lvl not in self.surviving_children_map
-                    or len(self.surviving_children_map[lvl]) == 0
-                ):
-                    continue
-
-                # for each node, check if it can be pruned and
-                for node in self.surviving_children_map[lvl]:
-                    lb, sched, rem = node
-
-                    if lb >= best_ub:  # prune the node if lb >= best_ub
-                        print(
-                            f"Back-pruned node at level {lvl} with LB={lb:.3f} >= best_ub={best_ub:.3f}"
-                        )
-                        self.surviving_children_map[lvl].remove(node)
-                        continue
-
-        for lvl in range(1, current_level):
-
-            best_level = None
-            # for each node, check if it can be pruned and, if not, develop it to the current level
-            for node in self.surviving_children_map[lvl]:
-                lb, sched, rem = node
-
-                if lb >= best_ub:  # prune the node if lb >= best_ub
-                    print(
-                        f"Back-pruned node at level {lvl} with LB={lb:.3f} >= best_ub={best_ub:.3f}"
-                    )
-                    self.surviving_children_map[lvl].remove(node)
-                    continue
-
-                #initialize temporary variables to keep track of the current node's schedule, remaining jobs and level
-                temp_sched = sched
-                temp_rem = rem
-                
-                best_local = None
-
-                if len(temp_rem) > 2:
-
-                    # for each remaining job, add it to the temporary schedule and check results
-                    for job in temp_rem:
-                        
-                        self.visited_nodes_count += 1
-                        new_sched = temp_sched + [job]
-                        new_rem = [j for j in temp_rem if j != job]
-
-                        lb_val, ub_val = self.node_evaluation(
-                            new_sched, plot, save_plots_folder
-                            )
-
-                        if best_local is None or ub_val < best_local[1]:
-                            best_local = (new_sched, ub_val, lb_val, new_rem)
-                            
-                        if best_local is None:
-                            self.surviving_children_map[lvl + 1].append(
-                                (lb_val, new_sched, new_rem)
-                            )
-                        elif lb_val < best_ub and lb_val < best_local[1]:
-                            self.surviving_children_map[lvl + 1].append(
-                                (lb_val, new_sched, new_rem)
-                            )
-
-                    
-                    # if best local was not pruned, add the node to the surviving children map
-                    if best_local:
-                        temp_sched, ub_val, lb_val, temp_rem = best_local
-
-                        # if found better ub, update all
-                        if ub_val < best_ub:
-                            best_ub = ub_val
-                            best_partial_schedules[lvl] = temp_sched
-                            best_node_data = best_local
-                            print(
-                                f"Updated best UB {best_ub:.3f} from backtracked path with partial schedule {temp_sched}"
-                            )
-
-                # if temp_rem only contains two jobs, simply check the two options compared to the best ub found
-                else:
-
-                    
-                    best_local_lateness, best_local_schedule = (
-                        self.final_node_evaluation(
-                            temp_sched, temp_rem, plot, save_plots_folder
-                        )
-                    )
-
-                    #if ub improved, update best ub and schedule
-                    if best_local_lateness < best_ub:
-
-                        best_ub = best_local_lateness
-                        best_schedule = best_local_schedule
-                        temp_rem = []
-                        print(
-                            f"Back-tracked new global best UB {best_ub:.3f} with complete schedule {best_schedule}"
-                        )
-                        continue
+            # Optional: Print progress occasionally
+            # if self.visited_nodes_count % 1000 == 0:
+            #      print(f"Visited: {self.visited_nodes_count} | Stack Size: {len(stack)} | Best UB: {best_ub:.3f}")
 
         elapsed_time = time.time() - start_time
-        print("\nBest schedule found:", best_schedule)
-        print(f"Visited nodes: {self.visited_nodes_count}")
-        print(f"Best UB (lateness): {best_ub:.3f}")
+        print("\nFinal Best schedule found:", best_schedule)
+        print(f"Total Visited nodes: {self.visited_nodes_count}")
+        print(f"Final Best UB: {best_ub:.3f}")
         print(f"Elapsed time: {elapsed_time:.2f} seconds")
 
         return best_schedule, elapsed_time
-
+    
     def node_evaluation(self, new_sched, plot=False, folder=None):
         """
         Returns the lower and upper bound for the lateness of a given incomplete schedule, and generates a plot if requested

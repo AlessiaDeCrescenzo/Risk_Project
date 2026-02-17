@@ -105,7 +105,8 @@ def read_file_fs(file_path, n_machines=2):
 
             for j in range(start_index, end_index):
                 
-                op = j//num_jobs_per_instance
+                rel_j = j - start_index
+                op = rel_j//num_jobs_per_instance
                 job_id = j%num_jobs_per_instance
                 
                 job_tuple = parsed_instances[j]
