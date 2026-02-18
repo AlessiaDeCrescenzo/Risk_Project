@@ -7,7 +7,7 @@ from Instances import *
 #instances=sample_test_instances(num_instances=32, seed=1)
 #instances=process_file("test_10_01.txt")
 
-instances=read_file_fs("test_10_01.txt", n_machines=1)
+instances=read_file_fs("test_10_01.txt", n_machines=2)
 
 toy_instance ={
         "num_jobs": 4,
@@ -51,7 +51,7 @@ toy_instance ={
         ]
     }
 
-bandb = Branch_Bound(toy_instance,threshold=0.95, obj_f = "var")
+bandb = Branch_Bound(toy_instance,num_machines=1,threshold=0.95, obj_f = "var")
 best_schedule,t = bandb.build_schedule_with_bounds(plot=True, save_plots_folder='plots_toy_example')
 
 #bandb_c_var= Branch_Bound(toy_instance,threshold=0.95,obj_f= "c_var")
@@ -63,7 +63,7 @@ mean_time_c_var=0
 mean_n_c_var=0
 for i in range(32):
     
-    var_solver = Branch_Bound(instances[i],threshold=0.95, obj_f = "var")
+    var_solver = Branch_Bound(instances[i],num_machines=2,threshold=0.95, obj_f = "var")
     #c_var_solver = Branch_Bound(instances[i],threshold=0.95,obj_f= "c_var")
     
     best_schedule,t = var_solver.build_schedule_with_bounds()
